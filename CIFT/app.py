@@ -568,7 +568,17 @@ def preprocess_ml_data(features, labels, dataset_tags):
 
 @app.route('/preprocess', methods=['POST'])
 def preprocess():
-    threading.Thread(target=preprocess_all_data).start()
+    """Run preprocessing in a thread."""
+    def run_preprocess():
+        global status, X_train, X_test, y_train_dict, y_test_dict, output_dict
+        status['preprocessing']['running'] = True
+        status['preprocessing']['progress'] = 0
+        logger.info("Starting preprocessing...")
+        features, labels, datasets = preprocess_all_data()
+        X_train, X_test, y_train_dict, y_test_dict, output_dict = preprocess_ml_data(features, labels, datasets)
+        logger.info("Preprocessing completed successfully")
+    
+    threading.Thread(target=run_preprocess).start()
     return jsonify({"status": "Preprocessing started"})
 
 @app.route('/train', methods=['POST'])
