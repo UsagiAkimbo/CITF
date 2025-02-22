@@ -90,13 +90,6 @@ class PlanetaryData(db.Model):
     citf_torsion = db.Column(db.Float)  # Calculated T_p
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Initialize database tables
-with app.app_context():
-    if not status['training'].get('loss'):
-        status['training']['loss'] = []
-        status['training']['mae'] = []
-        status['training']['torsion_error'] = []
-
 # Global status for preprocessing and training
 status = {
     'preprocessing': {'running': False, 'progress': 0, 'message': 'Idle'},
@@ -105,6 +98,13 @@ status = {
 }
 model = None
 X_train, X_test, y_train_dict, y_test_dict, output_dict = None, None, None, None, None
+
+# Initialize database tables
+with app.app_context():
+    if not status['training'].get('loss'):
+        status['training']['loss'] = []
+        status['training']['mae'] = []
+        status['training']['torsion_error'] = []
 
 # Helper function for error handling
 def api_error(message, status_code=500):
