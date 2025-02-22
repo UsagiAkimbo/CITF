@@ -92,13 +92,16 @@ class PlanetaryData(db.Model):
 
 # Initialize database tables
 with app.app_context():
-    db.create_all()
+    if not status['training'].get('loss'):
+        status['training']['loss'] = []
+        status['training']['mae'] = []
+        status['training']['torsion_error'] = []
 
 # Global status for preprocessing and training
 status = {
     'preprocessing': {'running': False, 'progress': 0, 'message': 'Idle'},
-    'training': {'running': False, 'progress': 0, 'message': 'Idle'},
-    'testing': {'running': False, 'progress': 0, 'message': 'Idle'}
+    'training': {'running': False, 'progress': 0, 'message': 'Idle', 'loss': [], 'mae': [], 'torsion_error': []},
+    'testing': {'running': False, 'progress': 0, 'message': 'Idle', 'mse': [], 'mae': [], 'torsion_error': []}
 }
 model = None
 X_train, X_test, y_train_dict, y_test_dict, output_dict = None, None, None, None, None
@@ -663,24 +666,32 @@ def test():
 
 @app.route('/stream_data', methods=['GET'])
 def stream_data():
+    """Stream real-time CITF data from SQLite."""
     def generate():
-        while True:
-            data = {
-                'exoplanet_count': Exoplanet.query.count(),
-                'gw_events': GWEvent.query.count(),
-                'status': status,
-                'predictions': {d: p[:5].tolist() for d, p in latest_predictions.items()} if latest_predictions else {}
-            }
-            yield f"data: {json.dumps(data)}\n\n"
-            time.sleep(1)
+        with app.app_context():  # Add application context
+            while True:
+                data = {
+                    'exoplanet_count': Exoplanet.query.count(),
+                    'gw_events': GWEvent.query.count(),
+                    'cmb_entries': CMBData.query.count(),
+                    'uhecr_count': UHECR.query.count(),
+                    'stellar_count': StellarMotion.query.count(),
+                    'planetary_count': PlanetaryData.query.count(),
+                    'status': status,
+                    'predictions': {d: p[:5].tolist() for d, p in latest_predictions.items()} if latest_predictions else {}
+                }
+                yield f"data: {json.dumps(data)}\n\n"
+                time.sleep(1)  # Update every second
     return app.response_class(generate(), mimetype='text/event-stream')
 
 @app.route('/visualize_ml', methods=['GET'])
+@app.route('/visualize_ml', methods=['GET'])
 def visualize_ml():
+    """Generate temperature-color-coded ML visualizations."""
     section = request.args.get('section', 'training')
     
     plt.figure(figsize=(8, 6))
-    if section == 'training' and status['training']['loss']:
+    if section == 'training' and status['training'].get('loss'):  # Use .get() to avoid KeyError
         plt.plot(status['training']['loss'], label='Loss', color='cyan')
         plt.plot(status['training']['mae'], label='MAE', color='magenta')
         plt.plot(status['training']['torsion_error'], label='Torsion Error rel. T_n', color='yellow')
@@ -689,7 +700,7 @@ def visualize_ml():
         plt.ylabel('Value')
         plt.legend()
         plt.grid(True, color='gray', linestyle='--', alpha=0.3)
-    elif section == 'testing' and status['testing']['mse']:
+    elif section == 'testing' and status['testing'].get('mse'):  # Use .get() here too
         datasets = list(output_dict.keys())[:len(status['testing']['mse'])]
         for i, (dataset, mse, mae, torsion_err) in enumerate(zip(datasets, status['testing']['mse'], 
                                                                   status['testing']['mae'], 
@@ -702,22 +713,10 @@ def visualize_ml():
         plt.ylabel('Error Value')
         plt.legend()
     else:
-        tables = [Exoplanet, GWEvent]
-        labels = ['Exoplanet', 'GW']
-        feature_cols = ['citf_torsion', 'citf_shift']
-        data_values = []
-        for table, label, col in zip(tables, labels, feature_cols):
-            entries = table.query.order_by(table.timestamp.desc()).limit(100).all()
-            values = [getattr(entry, col) for entry in entries if getattr(entry, col) is not None]
-            data_values.append(np.log10(np.array(values) + 1e-30))
-        for i, (label, values) in enumerate(zip(labels, data_values)):
-            plt.scatter(range(len(values)), [i] * len(values), c=values, cmap='coolwarm', 
-                        vmin=-20, vmax=20, s=50, label=label)
-        plt.colorbar(label='Log10(CITF Feature Value)')
-        plt.yticks(range(len(labels)), labels)
-        plt.xlabel('Sample Index')
+        # Simplified default case—show placeholder if no data
+        plt.text(0.5, 0.5, 'No Data Yet', ha='center', va='center', color='white', fontsize=14)
         plt.title(f'CITF {section.capitalize()} Progress')
-        plt.legend()
+        plt.axis('off')
     
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', facecolor='#1a1a2e', edgecolor='none')
