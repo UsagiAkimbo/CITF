@@ -685,7 +685,6 @@ def stream_data():
     return app.response_class(generate(), mimetype='text/event-stream')
 
 @app.route('/visualize_ml', methods=['GET'])
-@app.route('/visualize_ml', methods=['GET'])
 def visualize_ml():
     """Generate temperature-color-coded ML visualizations."""
     section = request.args.get('section', 'training')
