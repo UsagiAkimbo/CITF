@@ -21,12 +21,18 @@ import threading
 import time
 import sqlite3
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+import logging
 
 app = Flask(__name__)
 
-# Database configuration using DATABASE_URL from Railway
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///Database.sqlite')
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Database configuration - Use absolute path for Railway volume
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:////app/Database.sqlite')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+DATABASE_PATH = os.getenv('DATABASE_URL', 'sqlite:////app/Database.sqlite').replace('sqlite:///', '')
 
 # Initialize SQLAlchemy
 db = SQLAlchemy(app)
@@ -90,7 +96,7 @@ class PlanetaryData(db.Model):
     citf_torsion = db.Column(db.Float)  # Calculated T_p
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Global status for preprocessing and training
+# Global state
 status = {
     'preprocessing': {'running': False, 'progress': 0, 'message': 'Idle'},
     'training': {'running': False, 'progress': 0, 'message': 'Idle', 'loss': [], 'mae': [], 'torsion_error': []},
@@ -98,13 +104,15 @@ status = {
 }
 model = None
 X_train, X_test, y_train_dict, y_test_dict, output_dict = None, None, None, None, None
+latest_predictions = {}
 
-# Initialize database tables
+# Initialize database tables with logging
 with app.app_context():
-    if not status['training'].get('loss'):
-        status['training']['loss'] = []
-        status['training']['mae'] = []
-        status['training']['torsion_error'] = []
+    try:
+        db.create_all()
+        logger.info("Database tables created successfully")
+    except Exception as e:
+        logger.error(f"Failed to create database tables: {str(e)}")
 
 # Helper function for error handling
 def api_error(message, status_code=500):
@@ -668,20 +676,29 @@ def test():
 def stream_data():
     """Stream real-time CITF data from SQLite."""
     def generate():
-        with app.app_context():  # Add application context
+        with app.app_context():
             while True:
                 data = {
-                    'exoplanet_count': Exoplanet.query.count(),
-                    'gw_events': GWEvent.query.count(),
-                    'cmb_entries': CMBData.query.count(),
-                    'uhecr_count': UHECR.query.count(),
-                    'stellar_count': StellarMotion.query.count(),
-                    'planetary_count': PlanetaryData.query.count(),
+                    'exoplanet_count': 0,
+                    'gw_events': 0,
+                    'cmb_entries': 0,
+                    'uhecr_count': 0,
+                    'stellar_count': 0,
+                    'planetary_count': 0,
                     'status': status,
                     'predictions': {d: p[:5].tolist() for d, p in latest_predictions.items()} if latest_predictions else {}
                 }
+                try:
+                    data['exoplanet_count'] = Exoplanet.query.count()
+                    data['gw_events'] = GWEvent.query.count()
+                    data['cmb_entries'] = CMBData.query.count()
+                    data['uhecr_count'] = UHECR.query.count()
+                    data['stellar_count'] = StellarMotion.query.count()
+                    data['planetary_count'] = PlanetaryData.query.count()
+                except Exception as e:
+                    logger.error(f"Error querying counts: {str(e)}")
                 yield f"data: {json.dumps(data)}\n\n"
-                time.sleep(1)  # Update every second
+                time.sleep(1)
     return app.response_class(generate(), mimetype='text/event-stream')
 
 @app.route('/visualize_ml', methods=['GET'])
