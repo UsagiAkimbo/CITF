@@ -412,78 +412,78 @@ def preprocess_all_data():
     status['preprocessing']['message'] = "Starting preprocessing..."
 
     tables = {
-        'exoplanet': lambda df: (
-            df.dropna(subset=['orbital_period', 'density']),
+        'exoplanet': (
+            lambda df: df.dropna(subset=['orbital_period', 'density']),
             ['omega_p', 'rho', 'mass_approx'],
             ['citf_torsion', 'citf_velocity_anomaly'],
             lambda df: df.assign(
                 omega_p=2 * np.pi / (df['orbital_period'] * 86400),
-                rho=df['density'] * 1000,  # Convert g/cm^3 to kg/m^3
-                mass_approx=1000,  # Placeholder spacecraft mass (kg), consistent with Flyby
+                rho=df['density'] * 1000,
+                mass_approx=1000,
                 citf_torsion=lambda x: calculate_citf_torsion(x['omega_p'], x['rho']),
                 citf_velocity_anomaly=lambda x: calculate_citf_velocity_anomaly(x['citf_torsion'], mass=1000, distance=5e5)
             )
         ),
-        'gw_event': lambda df: (
-            df.dropna(subset=['strain_sample']),
+        'gw_event': (
+            lambda df: df.dropna(subset=['strain_sample']),
             ['detector_mass', 'distance', 'strain_sample'],
             ['citf_shift', 'citf_energy'],
             lambda df: df.assign(
-                detector_mass=40,  # LIGO mirror mass (kg)
-                distance=4000,  # LIGO arm length (m)
-                citf_shift=lambda x: calculate_citf_shift(1.008e-6 * 5e-13, mass=40, distance=4000),  # S = 5e-13 for GW
+                detector_mass=40,
+                distance=4000,
+                citf_shift=lambda x: calculate_citf_shift(1.008e-6 * 5e-13, mass=40, distance=4000),
                 citf_energy=lambda x: calculate_citf_energy(1.008e-6 * 5e-13, mass=40, distance=4000)
             )
         ),
-        'cmb_data': lambda df: (
-            df.dropna(subset=['map_value']),
+        'cmb_data': (
+            lambda df: df.dropna(subset=['map_value']),
             ['nside', 'map_value'],
             ['citf_scaling', 'citf_temperature_anomaly'],
             lambda df: df.assign(
-                nside=df['nside'],  # HEALPix resolution
-                map_value=df['map_value'],  # CMB temperature (K)
-                citf_scaling=2e-7,  # Cosmic S factor
-                citf_temperature_anomaly=lambda x: x['map_value'] * x['citf_scaling']  # Delta T
+                nside=df['nside'],
+                map_value=df['map_value'],
+                citf_scaling=2e-7,
+                citf_temperature_anomaly=lambda x: x['map_value'] * x['citf_scaling']
             )
         ),
-        'uhecr': lambda df: (
-            df.dropna(subset=['energy']),
+        'uhecr': (
+            lambda df: df.dropna(subset=['energy']),
             ['proton_mass', 'distance', 'energy', 'ra', 'dec'],
             ['citf_energy', 'citf_conduction_factor'],
             lambda df: df.assign(
-                proton_mass=1.6726e-27,  # Proton mass (kg)
-                distance=1e24,  # 100 Mpc (m)
-                energy=df['energy'],  # Raw energy (eV)
-                ra=df['ra'],  # Right Ascension
-                dec=df['dec'],  # Declination
+                proton_mass=1.6726e-27,
+                distance=1e24,
+                energy=df['energy'],
+                ra=df['ra'],
+                dec=df['dec'],
                 citf_energy=lambda x: calculate_citf_energy(8.994e12 * 1e-17, mass=x['proton_mass'], distance=x['distance']),
-                citf_conduction_factor=1e-17  # S for UHECR
+                citf_conduction_factor=1e-17
             )
         ),
-        'stellar_motion': lambda df: (
-            df.dropna(subset=['ra', 'dec']),
+        'stellar_motion': (
+            lambda df: df.dropna(subset=['ra', 'dec']),
             ['omega_p', 'rho', 'mass_approx', 'ra', 'dec'],
             ['citf_torsion', 'citf_anomaly'],
             lambda df: df.assign(
                 omega_p=np.where(df['source'] == 'SDSS',
-                                df['redshift'] * 3e8 / 3.0857e19,  # Approximate from redshift (rad/s)
-                                ((df['pmra']**2 + df['pmdec']**2)**0.5) * 4.74e-6 / 3.0857e19),  # Gaia proper motion (rad/s)
-                rho=1410,  # Solar-like density (kg/m^3)
-                mass_approx=1,  # Placeholder stellar mass (kg)
+                                 df['redshift'] * 3e8 / 3.0857e19,
+                                 ((df['pmra']**2 + df['pmdec']**2)**0.5) * 4.74e-6 / 3.0857e19),
+                rho=1410,
+                mass_approx=1,
                 ra=df['ra'],
                 dec=df['dec'],
                 citf_torsion=lambda x: calculate_citf_torsion(x['omega_p'], x['rho']),
                 citf_anomaly=lambda x: calculate_citf_velocity_anomaly(x['citf_torsion'], mass=1, distance=1)
             )
         ),
-        'planetary_data': lambda df: (
-            df.dropna(subset=['rotation_period', 'density']),
+        'planetary_data': (
+            lambda df: df.dropna(subset=['rotation_period', 'density']),
             ['omega_p', 'rho', 'mass_approx'],
             ['citf_torsion', 'citf_velocity_anomaly'],
             lambda df: df.assign(
-                omega_p=2 * np.pi / (df['rotation_period'] * 86400),  # rad/s
-                rho=df['density'] * 1000,  # kg/m^3
-                mass_approx=1000,  # Placeholder spacecraft mass (kg)
+                omega_p=2 * np.pi / (df['rotation_period'] * 86400),
+                rho=df['density'] * 1000,
+                mass_approx=1000,
                 citf_torsion=lambda x: calculate_citf_torsion(x['omega_p'], x['rho']),
                 citf_velocity_anomaly=lambda x: calculate_citf_velocity_anomaly(x['citf_torsion'], mass=1000, distance=5e5)
             )
@@ -498,6 +498,7 @@ def preprocess_all_data():
         df = fetch_data(table)
         if df is None or df.empty:
             status['preprocessing']['message'] = f"No data for {table}"
+            logger.info(f"No data found for {table}")
             continue
         
         df_clean = clean_func(df)
@@ -515,6 +516,7 @@ def preprocess_all_data():
         
         status['preprocessing']['progress'] = min(status['preprocessing']['progress'] + 100 // len(tables), 100)
         status['preprocessing']['message'] = f"Processed {table}"
+        logger.info(f"Processed {table}")
     
     if all_features and all_labels:
         features_all = np.vstack(all_features)
@@ -527,8 +529,10 @@ def preprocess_all_data():
         
         status['preprocessing']['progress'] = 100
         status['preprocessing']['message'] = "Preprocessing completed"
+        logger.info("Preprocessing completed successfully")
     else:
         status['preprocessing']['message'] = "No valid data processed"
+        logger.warning("No valid data processed")
     
     status['preprocessing']['running'] = False
     return features_all, labels_all, datasets_all
