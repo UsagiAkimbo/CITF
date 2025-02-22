@@ -8,7 +8,7 @@ import gwpy.timeseries
 import healpy as hp
 import os
 import pandas as pd
-from flask-sqlalchemy import SQLAlchemy
+from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import matplotlib.pyplot as plt
 import io
