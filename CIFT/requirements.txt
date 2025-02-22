@@ -7,6 +7,6 @@ pandas==2.2.3
 kaggle==1.6.17
 tensorflow==2.18.0
 scikit-learn==1.6.1
-numpy==2.2.3
+numpy==1.26.0
 matplotlib==3.10.0
 gunicorn==23.0.0
