@@ -410,6 +410,7 @@ def preprocess_all_data():
     status['preprocessing']['running'] = True
     status['preprocessing']['progress'] = 0
     status['preprocessing']['message'] = "Starting preprocessing..."
+    logger.info("Starting preprocessing...")
 
     tables = {
         'exoplanet': (
@@ -494,46 +495,213 @@ def preprocess_all_data():
     all_labels = []
     datasets = []
     
-    for table, (clean_func, feat_cols, label_cols, transform_func) in tables.items():
-        df = fetch_data(table)
-        if df is None or df.empty:
-            status['preprocessing']['message'] = f"No data for {table}"
-            logger.info(f"No data found for {table}")
-            continue
-        
-        df_clean = clean_func(df)
-        df_transformed = transform_func(df_clean)
-        
-        features = df_transformed[feat_cols]
-        labels = df_transformed[label_cols]
-        
-        scaler = StandardScaler()
-        features_scaled = scaler.fit_transform(features)
-        
-        all_features.append(features_scaled)
-        all_labels.append(labels)
-        datasets.extend([table] * len(features_scaled))
-        
-        status['preprocessing']['progress'] = min(status['preprocessing']['progress'] + 100 // len(tables), 100)
-        status['preprocessing']['message'] = f"Processed {table}"
-        logger.info(f"Processed {table}")
-    
+    with app.app_context():
+        # Exoplanet - NASA Exoplanet Archive
+        try:
+            query = "SELECT pl_name, pl_radj, pl_dens, pl_orbper FROM ps WHERE pl_dens IS NOT NULL LIMIT 10"
+            df = NasaExoplanetArchive.query_criteria(table="ps", select=query).to_pandas()
+            clean_func, feat_cols, label_cols, transform_func = tables['exoplanet']
+            df_clean = clean_func(df)
+            df_transformed = transform_func(df_clean)
+            for _, row in df_transformed.iterrows():
+                planet = Exoplanet(
+                    name=row['pl_name'], radius=row['pl_radj'], density=row['pl_dens'],
+                    orbital_period=row['pl_orbper'], citf_torsion=row['citf_torsion'],
+                    citf_velocity_anomaly=row['citf_velocity_anomaly']
+                )
+                db.session.add(planet)
+            db.session.commit()
+            features = df_transformed[feat_cols]
+            labels = df_transformed[label_cols]
+            all_features.append(StandardScaler().fit_transform(features))
+            all_labels.append(labels)
+            datasets.extend(['exoplanet'] * len(features))
+            status['preprocessing']['progress'] = min(status['preprocessing']['progress'] + 16, 100)
+            status['preprocessing']['message'] = "Processed exoplanet"
+            logger.info("Processed exoplanet")
+        except Exception as e:
+            logger.error(f"Error processing exoplanet: {str(e)}")
+
+        # GW Event - LIGO LOSC
+        try:
+            event = 'GW150914'  # Default event, could parameterize
+            url = f"https://gwosc.org/archive/data/{event}/H-H1_LOSC_4_V2-1126259446-32.hdf5"
+            response = requests.get(url, timeout=10)
+            with open("temp_gw_data.hdf5", 'wb') as f:
+                f.write(response.content)
+            strain = gwpy.timeseries.TimeSeries.read("temp_gw_data.hdf5", format='hdf5.losc')
+            df = pd.DataFrame({
+                'event_name': [event] * 100,  # Sample 100 points
+                'gps_time': strain.times.value[:100],
+                'strain_sample': strain.value[:100]
+            })
+            os.remove("temp_gw_data.hdf5")  # Cleanup
+            clean_func, feat_cols, label_cols, transform_func = tables['gw_event']
+            df_clean = clean_func(df)
+            df_transformed = transform_func(df_clean)
+            for _, row in df_transformed.iterrows():
+                event = GWEvent(
+                    event_name=row['event_name'], gps_time=row['gps_time'], strain_sample=row['strain_sample'],
+                    citf_shift=row['citf_shift'], citf_energy=row['citf_energy']
+                )
+                db.session.add(event)
+            db.session.commit()
+            features = df_transformed[feat_cols]
+            labels = df_transformed[label_cols]
+            all_features.append(StandardScaler().fit_transform(features))
+            all_labels.append(labels)
+            datasets.extend(['gw_event'] * len(features))
+            status['preprocessing']['progress'] = min(status['preprocessing']['progress'] + 16, 100)
+            status['preprocessing']['message'] = "Processed gw_event"
+            logger.info("Processed gw_event")
+        except Exception as e:
+            logger.error(f"Error processing gw_event: {str(e)}")
+
+        # CMB Data - Planck Legacy Archive (using preloaded FITS file)
+        try:
+            map_file = "data/HFI_SkyMap_545_2048_R3.00_full.fits"
+            if not os.path.exists(map_file):
+                logger.warning("Planck CMB FITS file not found - skipping")
+                raise FileNotFoundError("Planck FITS file missing")
+            cmb_map = hp.read_map(map_file, verbose=False)
+            df = pd.DataFrame({
+                'nside': [hp.get_nside(cmb_map)] * 100,  # Sample 100 points
+                'map_value': cmb_map[:100]
+            })
+            clean_func, feat_cols, label_cols, transform_func = tables['cmb_data']
+            df_clean = clean_func(df)
+            df_transformed = transform_func(df_clean)
+            for _, row in df_transformed.iterrows():
+                cmb = CMBData(
+                    nside=row['nside'], map_value=row['map_value'],
+                    citf_scaling=row['citf_scaling'], citf_temperature_anomaly=row['citf_temperature_anomaly']
+                )
+                db.session.add(cmb)
+            db.session.commit()
+            features = df_transformed[feat_cols]
+            labels = df_transformed[label_cols]
+            all_features.append(StandardScaler().fit_transform(features))
+            all_labels.append(labels)
+            datasets.extend(['cmb_data'] * len(features))
+            status['preprocessing']['progress'] = min(status['preprocessing']['progress'] + 16, 100)
+            status['preprocessing']['message'] = "Processed cmb_data"
+            logger.info("Processed cmb_data")
+        except Exception as e:
+            logger.error(f"Error processing cmb_data: {str(e)}")
+
+        # UHECR - HEASARC
+        try:
+            heasarc = Heasarc()
+            table = "fermi8y"
+            df = heasarc.query_mission_list(mission=table, fields="energy,ra,dec", conditions="energy>1e9").to_pandas()
+            df = df.head(10)  # Limit for testing
+            clean_func, feat_cols, label_cols, transform_func = tables['uhecr']
+            df_clean = clean_func(df)
+            df_transformed = transform_func(df_clean)
+            for _, row in df_transformed.iterrows():
+                uhecr = UHECR(
+                    energy=row['energy'], ra=row['ra'], dec=row['dec'],
+                    citf_energy=row['citf_energy'], citf_conduction_factor=row['citf_conduction_factor']
+                )
+                db.session.add(uhecr)
+            db.session.commit()
+            features = df_transformed[feat_cols]
+            labels = df_transformed[label_cols]
+            all_features.append(StandardScaler().fit_transform(features))
+            all_labels.append(labels)
+            datasets.extend(['uhecr'] * len(features))
+            status['preprocessing']['progress'] = min(status['preprocessing']['progress'] + 16, 100)
+            status['preprocessing']['message'] = "Processed uhecr"
+            logger.info("Processed uhecr")
+        except Exception as e:
+            logger.error(f"Error processing uhecr: {str(e)}")
+
+        # Stellar Motion - SDSS/Gaia
+        try:
+            # SDSS
+            sdss_query = "SELECT TOP 10 ra, dec, z FROM SpecObj WHERE class='STAR' AND z IS NOT NULL"
+            sdss_df = SDSS.query_sql(sdss_query).to_pandas()
+            sdss_df['source'] = 'SDSS'
+            # Gaia
+            gaia_query = "SELECT TOP 10 ra, dec, pmra, pmdec FROM gaiadr2.gaia_source WHERE pmra IS NOT NULL"
+            gaia_job = Gaia.launch_job(gaia_query)
+            gaia_df = gaia_job.get_results().to_pandas()
+            gaia_df['source'] = 'Gaia'
+            gaia_df['redshift'] = np.nan  # Gaia doesn’t provide redshift
+            df = pd.concat([sdss_df, gaia_df], ignore_index=True)
+            clean_func, feat_cols, label_cols, transform_func = tables['stellar_motion']
+            df_clean = clean_func(df)
+            df_transformed = transform_func(df_clean)
+            for _, row in df_transformed.iterrows():
+                stellar = StellarMotion(
+                    source=row['source'], ra=row['ra'], dec=row['dec'],
+                    redshift=row.get('redshift', None), pmra=row.get('pmra', None), pmdec=row.get('pmdec', None),
+                    citf_torsion=row['citf_torsion'], citf_anomaly=row['citf_anomaly']
+                )
+                db.session.add(stellar)
+            db.session.commit()
+            features = df_transformed[feat_cols]
+            labels = df_transformed[label_cols]
+            all_features.append(StandardScaler().fit_transform(features))
+            all_labels.append(labels)
+            datasets.extend(['stellar_motion'] * len(features))
+            status['preprocessing']['progress'] = min(status['preprocessing']['progress'] + 16, 100)
+            status['preprocessing']['message'] = "Processed stellar_motion"
+            logger.info("Processed stellar_motion")
+        except Exception as e:
+            logger.error(f"Error processing stellar_motion: {str(e)}")
+
+        # Planetary Data - PDS (using placeholder CSV until real fetch)
+        try:
+            file_path = "data/jupiter_data.csv"  # Preload this file in Railway volume
+            if not os.path.exists(file_path):
+                logger.warning("PDS Jupiter CSV not found - using placeholder")
+                df = pd.DataFrame({
+                    'planet': ['Jupiter'] * 10,
+                    'radius_km': [69911] * 10,
+                    'density_g_cm3': [1.326] * 10,
+                    'rotation_period_days': [0.41354] * 10
+                })
+            else:
+                df = pd.read_csv(file_path)
+            clean_func, feat_cols, label_cols, transform_func = tables['planetary_data']
+            df_clean = clean_func(df)
+            df_transformed = transform_func(df_clean)
+            for _, row in df_transformed.iterrows():
+                planet = PlanetaryData(
+                    planet=row['planet'], radius=row['radius_km'], density=row['density_g_cm3'],
+                    rotation_period=row['rotation_period_days'], citf_torsion=row['citf_torsion'],
+                    citf_velocity_anomaly=row['citf_velocity_anomaly']
+                )
+                db.session.add(planet)
+            db.session.commit()
+            features = df_transformed[feat_cols]
+            labels = df_transformed[label_cols]
+            all_features.append(StandardScaler().fit_transform(features))
+            all_labels.append(labels)
+            datasets.extend(['planetary_data'] * len(features))
+            status['preprocessing']['progress'] = min(status['preprocessing']['progress'] + 16, 100)
+            status['preprocessing']['message'] = "Processed planetary_data"
+            logger.info("Processed planetary_data")
+        except Exception as e:
+            logger.error(f"Error processing planetary_data: {str(e)}")
+
     if all_features and all_labels:
         features_all = np.vstack(all_features)
         labels_all = pd.concat(all_labels, ignore_index=True)
         datasets_all = np.array(datasets)
-        
         np.save("data/citf_features.npy", features_all)
         labels_all.to_csv("data/citf_labels.csv", index=False)
         pd.DataFrame(datasets_all, columns=['dataset']).to_csv("data/citf_datasets.csv", index=False)
-        
         status['preprocessing']['progress'] = 100
         status['preprocessing']['message'] = "Preprocessing completed"
         logger.info("Preprocessing completed successfully")
     else:
+        status['preprocessing']['progress'] = 100
         status['preprocessing']['message'] = "No valid data processed"
         logger.warning("No valid data processed")
-    
+        features_all, labels_all, datasets_all = np.array([]), pd.DataFrame(), np.array([])
+
     status['preprocessing']['running'] = False
     return features_all, labels_all, datasets_all
 
